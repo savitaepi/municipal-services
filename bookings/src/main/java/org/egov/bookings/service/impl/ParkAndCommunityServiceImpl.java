@@ -4,9 +4,11 @@ import java.sql.Date;
 import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -16,11 +18,14 @@ import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.egov.bookings.config.BookingsConfiguration;
 import org.egov.bookings.contract.AvailabilityResponse;
+import org.egov.bookings.contract.BookingsRequestKafka;
+import org.egov.bookings.contract.MdmsJsonFields;
 import org.egov.bookings.contract.ParkAndCommunitySearchCriteria;
 import org.egov.bookings.contract.ParkCommunityFeeMasterRequest;
 import org.egov.bookings.contract.ParkCommunityFeeMasterResponse;
 import org.egov.bookings.model.BookingsModel;
 import org.egov.bookings.model.ParkCommunityHallV1MasterModel;
+import org.egov.bookings.producer.BookingsProducer;
 import org.egov.bookings.repository.ParkAndCommunityRepository;
 import org.egov.bookings.repository.ParkCommunityHallV1MasterRepository;
 import org.egov.bookings.service.BookingsService;
@@ -75,6 +80,8 @@ public class ParkAndCommunityServiceImpl implements ParkAndCommunityService {
 	
 	private Lock lock = new ReentrantLock();
 
+	@Autowired
+	private BookingsProducer bookingsProducer;
 	/*
 	 * (non-Javadoc)
 	 * 
@@ -83,23 +90,28 @@ public class ParkAndCommunityServiceImpl implements ParkAndCommunityService {
 	 */
 	@Override
 	public BookingsModel createParkAndCommunityBooking(BookingsRequest bookingsRequest) {
-		BookingsModel bookingsModel = null;
 		boolean flag = bookingService.isBookingExists(bookingsRequest.getBookingsModel().getBkApplicationNumber());
-
+		
 		if (!flag)
-			enrichmentService.enrichBookingsCreateRequest(bookingsRequest);
+			enrichmentService.enrichParkCommunityCreateRequest(bookingsRequest);
 		enrichmentService.generateDemand(bookingsRequest);
 
 		if (config.getIsExternalWorkFlowEnabled()) {
 			if (!flag)
 				workflowIntegrator.callWorkFlow(bookingsRequest);
 		}
-		// bookingsProducer.push(saveTopic, bookingsRequest.getBookingsModel());
 		enrichmentService.enrichBookingsDetails(bookingsRequest);
-		bookingsModel = parkAndCommunityRepository.save(bookingsRequest.getBookingsModel());
-		bookingsRequest.setBookingsModel(bookingsModel);
-		return bookingsModel;
-
+		try {
+		BookingsRequestKafka kafkaBookingRequest = enrichmentService.enrichForKafka(bookingsRequest);
+		bookingsProducer.push(config.getSaveBookingTopic(), kafkaBookingRequest);
+		}catch (Exception e) {
+			throw new CustomException("PARK_COMMUNITY_CREATE_ERROR",e.getLocalizedMessage());
+		}
+		//parkAndCommunityRepository.save(bookingsRequest.getBookingsModel());
+		if (!BookingsFieldsValidator.isNullOrEmpty(bookingsRequest.getBookingsModel())) {
+			bookingsProducer.push(config.getSaveBookingSMSTopic(), bookingsRequest);
+		}
+		return bookingsRequest.getBookingsModel();
 	}
 
 	/*
@@ -119,22 +131,28 @@ public class ParkAndCommunityServiceImpl implements ParkAndCommunityService {
 		if (config.getIsExternalWorkFlowEnabled())
 			workflowIntegrator.callWorkFlow(bookingsRequest);
 
-		// bookingsProducer.push(saveTopic, bookingsRequest.getBookingsModel());
 		// bookingsRequest.getBookingsModel().setUuid(bookingsRequest.getRequestInfo().getUserInfo().getUuid());
 		BookingsModel bookingsModel = null;
 		if (!BookingsConstants.APPLY.equals(bookingsRequest.getBookingsModel().getBkAction())
 				&& BookingsConstants.BUSINESS_SERVICE_PACC.equals(businessService)) {
 			bookingsModel = enrichmentService.enrichPaccDetails(bookingsRequest);
-			bookingsModel = parkAndCommunityRepository.save(bookingsModel);
+			bookingsRequest.setBookingsModel(bookingsModel);
+			BookingsRequestKafka kafkaBookingRequest = enrichmentService.enrichForKafka(bookingsRequest);
+			bookingsProducer.push(config.getUpdateBookingTopic(), kafkaBookingRequest);
+			//bookingsModel = parkAndCommunityRepository.save(bookingsModel);
 		} else {
 			if (BookingsConstants.APPLY.equals(bookingsRequest.getBookingsModel().getBkAction())
 					&& BookingsConstants.BUSINESS_SERVICE_PACC.equals(businessService)) {
 				config.setParkAndCommercialLock(true);
 			}
-			bookingsModel = parkAndCommunityRepository.save(bookingsRequest.getBookingsModel());
+			BookingsRequestKafka kafkaBookingRequest = enrichmentService.enrichForKafka(bookingsRequest);
+			bookingsProducer.push(config.getUpdateBookingTopic(), kafkaBookingRequest);
+			//bookingsModel = parkAndCommunityRepository.save(bookingsRequest.getBookingsModel());
 		}
-
-		return bookingsModel;
+		if (!BookingsFieldsValidator.isNullOrEmpty(bookingsRequest.getBookingsModel())) {
+			bookingsProducer.push(config.getUpdateBookingSMSTopic(), bookingsRequest);
+		}
+		return bookingsRequest.getBookingsModel();
 	}
 
 	/*
@@ -171,7 +189,7 @@ public class ParkAndCommunityServiceImpl implements ParkAndCommunityService {
 		if (null != bookingsModel) {
 			for (BookingsModel bkModel : bookingsModel) {
 				bookedDates.add(AvailabilityResponse.builder().fromDate(bkModel.getBkFromDate())
-						.toDate(bkModel.getBkToDate()).build());
+						.toDate(bkModel.getBkToDate()).timeslots(bkModel.getTimeslots()).build());
 			}
 		}
 		return bookedDates;

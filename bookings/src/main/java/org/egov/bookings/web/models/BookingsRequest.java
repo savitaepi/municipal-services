@@ -12,19 +12,21 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import lombok.ToString;
 
 @Getter
 @Setter
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
+@ToString
 public class BookingsRequest {
 
 	@JsonProperty("Booking")
 	@Valid
-	private BookingsModel bookingsModel = null;
+	private BookingsModel bookingsModel;
 
 	@JsonProperty("RequestInfo")
-	private RequestInfo requestInfo = null;
+	private RequestInfo requestInfo;
 
 }

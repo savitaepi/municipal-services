@@ -10,11 +10,14 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
 import org.egov.bookings.config.BookingsConfiguration;
+import org.egov.bookings.contract.BookingsRequestKafka;
 import org.egov.bookings.contract.IdResponse;
+import org.egov.bookings.contract.NewLocationKafkaRequest;
 import org.egov.bookings.contract.ParkCommunityFeeMasterResponse;
 import org.egov.bookings.contract.UserDetails;
 import org.egov.bookings.dto.SearchCriteriaFieldsDTO;
@@ -232,7 +235,7 @@ public class EnrichmentService {
 
 				bookingsModel.setBkApplicationStatus(bookingsRequest.getBookingsModel().getBkApplicationStatus());
 				bookingsModel.setBkAction(bookingsRequest.getBookingsModel().getBkAction());
-				bookingsModel.setBookingsRemarks(bookingsRequest.getBookingsModel().getBookingsRemarks());
+				bookingsModel.setBkRemarks(bookingsRequest.getBookingsModel().getBkRemarks());
 				if (BookingsConstants.PAY.equals(bookingsRequest.getBookingsModel().getBkAction())) {
 					LocalDate bkFromDate = LocalDate.now();
 					Date fromDate = java.sql.Date.valueOf(bkFromDate);
@@ -264,7 +267,7 @@ public class EnrichmentService {
 					.findByBkApplicationNumber(bookingsRequest.getBookingsModel().getBkApplicationNumber());
 			bookingsModel.setBkApplicationStatus(bookingsRequest.getBookingsModel().getBkApplicationStatus());
 			bookingsModel.setBkAction(bookingsRequest.getBookingsModel().getBkAction());
-			bookingsModel.setBookingsRemarks(bookingsRequest.getBookingsModel().getBookingsRemarks());
+			bookingsModel.setBkRemarks(bookingsRequest.getBookingsModel().getBkRemarks());
 			bookingsModel.setBkContactNo(bookingsRequest.getBookingsModel().getBkContactNo());
 			bookingsModel.setBkDriverName(bookingsRequest.getBookingsModel().getBkDriverName());
 			bookingsModel.setBkApproverName(bookingsRequest.getBookingsModel().getBkApproverName());
@@ -294,7 +297,7 @@ public class EnrichmentService {
 					.findByApplicationNumber(newLocationRequest.getNewLocationModel().getApplicationNumber());
 			osujmNewLocationModel.setApplicationStatus(newLocationRequest.getNewLocationModel().getApplicationStatus());
 			osujmNewLocationModel.setAction(newLocationRequest.getNewLocationModel().getAction());
-			osujmNewLocationModel.setBookingsRemarks(newLocationRequest.getNewLocationModel().getBookingsRemarks());
+			osujmNewLocationModel.setRemarks(newLocationRequest.getNewLocationModel().getRemarks());
 		} catch (Exception e) {
 			throw new CustomException("NLUJM UPDATE ERROR", "ERROR WHILE UPDATING NLUJM DETAILS ");
 		}
@@ -325,7 +328,7 @@ public class EnrichmentService {
 					.findByBkApplicationNumber(bookingsRequest.getBookingsModel().getBkApplicationNumber());
 			bookingsModel.setBkApplicationStatus(bookingsRequest.getBookingsModel().getBkApplicationStatus());
 			bookingsModel.setBkAction(bookingsRequest.getBookingsModel().getBkAction());
-			bookingsModel.setBookingsRemarks(bookingsRequest.getBookingsModel().getBookingsRemarks());
+			bookingsModel.setBkRemarks(bookingsRequest.getBookingsModel().getBkRemarks());
 			if(!BookingsFieldsValidator.isNullOrEmpty(bookingsRequest.getBookingsModel().getBkPaymentStatus())) {
 				bookingsModel.setBkPaymentStatus(bookingsRequest.getBookingsModel().getBkPaymentStatus());
 			}
@@ -376,7 +379,7 @@ public class EnrichmentService {
 					.findByBkApplicationNumber(bookingsRequest.getBookingsModel().getBkApplicationNumber());
 			bookingsModel.setBkApplicationStatus(bookingsRequest.getBookingsModel().getBkApplicationStatus());
 			bookingsModel.setBkAction(bookingsRequest.getBookingsModel().getBkAction());
-			bookingsModel.setBookingsRemarks(bookingsRequest.getBookingsModel().getBookingsRemarks());
+			bookingsModel.setBkRemarks(bookingsRequest.getBookingsModel().getBkRemarks());
 		} catch (Exception e) {
 			throw new CustomException("PACC UPDATE ERROR", "ERROR WHILE UPDATING PACC DETAILS ");
 		}
@@ -394,11 +397,14 @@ public class EnrichmentService {
 			BigDecimal surchargeAmount = amount.multiply(
 					BigDecimal.valueOf(Long.valueOf(parkCommunityHallFee.getSurcharge())).divide(new BigDecimal(100)));
 			BigDecimal finalAmount = amount.add(surchargeAmount);
+			
+			BigDecimal finalBill = BookingsUtils.removeRoundOff(finalAmount);
+			
 			BigDecimal cgstAmount = amount.multiply(
 					BigDecimal.valueOf(Long.valueOf(parkCommunityHallFee.getCgstRate())).divide(new BigDecimal(100)));
 			BigDecimal ugstAmount = amount.multiply(
 					BigDecimal.valueOf(Long.valueOf(parkCommunityHallFee.getUtgstRate())).divide(new BigDecimal(100)));
-			parkCommunityFeeMasterResponse.setTotalAmount(finalAmount);
+			parkCommunityFeeMasterResponse.setTotalAmount(finalBill);
 			parkCommunityFeeMasterResponse.setAmount(amount);
 			parkCommunityFeeMasterResponse.setSurchargeAmount(surchargeAmount);
 			parkCommunityFeeMasterResponse.setCgstAmount(cgstAmount);
@@ -422,6 +428,57 @@ public class EnrichmentService {
 		List<UserDetails> userdetailsList = bookingsService.getAssignee(searchCriteriaFieldsDTO);
 		 if(!BookingsFieldsValidator.isNullOrEmpty(userdetailsList))
 		 bookingsRequest.getBookingsModel().setAssignee(userdetailsList.get(0).getUuid());
+	}
+
+
+
+	public BookingsRequestKafka enrichForKafka(BookingsRequest bookingsRequest) {
+		List<BookingsModel> bModel = new ArrayList<>();
+		bModel.add(bookingsRequest.getBookingsModel());
+		BookingsRequestKafka kafkaBookingRequest =  BookingsRequestKafka.builder().bookingsModel(bModel).requestInfo(bookingsRequest.getRequestInfo()).build();
+		return kafkaBookingRequest;
+	}
+
+
+
+	public NewLocationKafkaRequest enrichKafkaForNewLocation(NewLocationRequest newLocationRequest) {
+		List<OsujmNewLocationModel> sujmNewLocationModelList = new ArrayList<>();
+		sujmNewLocationModelList.add(newLocationRequest.getNewLocationModel());
+		NewLocationKafkaRequest kafkaNewLocationRequest =  NewLocationKafkaRequest.builder().newLocationModel(sujmNewLocationModelList).requestInfo(newLocationRequest.getRequestInfo()).build();
+		return kafkaNewLocationRequest;
+	}
+
+
+
+	public void enrichParkCommunityCreateRequest(BookingsRequest bookingsRequest) {
+		// TODO Auto-generated method stub
+
+		RequestInfo requestInfo = bookingsRequest.getRequestInfo();
+		String tenantId = bookingsRequest.getBookingsModel().getTenantId();
+
+		BookingsModel bookingsModel = bookingsRequest.getBookingsModel();
+
+		List<String> applicationNumbers = getIdList(requestInfo, tenantId, config.getApplicationNumberIdgenName(),
+				config.getApplicationNumberIdgenFormat());
+		ListIterator<String> itr = applicationNumbers.listIterator();
+
+		Map<String, String> errorMap = new HashMap<>();
+		/*
+		 * if (applicationNumbers.size() != bookingsRequest.getBookingsModel().size()) {
+		 * errorMap.put("IDGEN ERROR ",
+		 * "The number of LicenseNumber returned by idgen is not equal to number of TradeLicenses"
+		 * ); }
+		 */
+
+		if (!errorMap.isEmpty())
+			throw new CustomException(errorMap);
+		bookingsModel.setBkApplicationNumber(itr.next());
+		if (!BookingsFieldsValidator.isNullOrEmpty(bookingsRequest.getBookingsModel().getTimeslots())) {
+			bookingsRequest.getBookingsModel().getTimeslots().forEach(slots -> {
+				slots.setId(UUID.randomUUID().toString());
+				slots.setApplicationNumber(bookingsModel.getBkApplicationNumber());
+			});
+		}
 	}
 
 }

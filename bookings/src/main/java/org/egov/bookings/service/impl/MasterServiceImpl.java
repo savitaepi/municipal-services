@@ -7,12 +7,18 @@ import javax.transaction.Transactional;
 
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
+import org.egov.bookings.config.BookingsConfiguration;
 import org.egov.bookings.contract.BookingApprover;
 import org.egov.bookings.contract.OsbmApproverRequest;
 import org.egov.bookings.model.InventoryModel;
 import org.egov.bookings.model.OsbmApproverModel;
+import org.egov.bookings.model.OsbmFeeModel;
+import org.egov.bookings.model.OsujmFeeModel;
+import org.egov.bookings.producer.BookingsProducer;
 import org.egov.bookings.repository.CommonRepository;
 import org.egov.bookings.repository.OsbmApproverRepository;
+import org.egov.bookings.repository.OsbmFeeRepository;
+import org.egov.bookings.repository.OsujmFeeRepository;
 import org.egov.bookings.repository.ParkCommunityInventoryRepsitory;
 import org.egov.bookings.service.MasterService;
 import org.egov.bookings.validator.BookingsFieldsValidator;
@@ -23,7 +29,6 @@ import org.springframework.util.CollectionUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-// TODO: Auto-generated Javadoc
 /**
  * The Class MasterServiceImpl.
  */
@@ -48,8 +53,23 @@ public class MasterServiceImpl implements MasterService{
 	/** The common repository. */
 	
 	@Autowired
-	CommonRepository commonRepository;
+	private CommonRepository commonRepository;
 	
+	/** The osbm fee repository. */
+	@Autowired
+	private OsbmFeeRepository osbmFeeRepository;
+	
+	/** The osujm fee repository. */
+	@Autowired
+	private OsujmFeeRepository osujmFeeRepository;
+	
+	/** The bookings producer. */
+	@Autowired
+	private BookingsProducer bookingsProducer;
+	
+	/** The config. */
+	@Autowired
+	private BookingsConfiguration config;
 	
 	/**
 	 * Gets the park community inventory details.
@@ -88,17 +108,17 @@ public class MasterServiceImpl implements MasterService{
 		{
 			throw new IllegalArgumentException("Invalid osbmApproverRequest");
 		}
-		OsbmApproverModel osbmApproverModel = null;
+		OsbmApproverModel osbmApproverModel = new OsbmApproverModel();
 		try {
-			osbmApproverModel = new OsbmApproverModel();
 			osbmApproverModel.setSector(osbmApproverRequest.getSector());
 			osbmApproverModel.setUuid(osbmApproverRequest.getUuid());
-			osbmApproverModel = osbmApproverRepository.save(osbmApproverModel);
-
+			osbmApproverRequest.setOsbmApproverModel(osbmApproverModel);
+			bookingsProducer.push(config.getSaveApproverTopic(), osbmApproverRequest);
+//			osbmApproverModel = osbmApproverRepository.save(osbmApproverModel);
 		}catch (Exception e) {
 			throw new CustomException("APPROVER_SAVE_ERROR", "ERROR WHILE SAVING OSBM SECTOR");
 		}
-		return osbmApproverModel;
+		return osbmApproverRequest.getOsbmApproverModel();
 	}
 
 	/**
@@ -161,4 +181,59 @@ public class MasterServiceImpl implements MasterService{
 		return bookingApprover1;
 	}
 	
+	/**
+	 * Fetch all approver details.
+	 *
+	 * @return the list
+	 */
+	@Override
+	public List<OsbmApproverModel> fetchAllApproverDetails() {
+		List<OsbmApproverModel> osbmApproverList = new ArrayList<>();
+		try {
+			osbmApproverList = osbmApproverRepository.findAll();
+		}
+		catch(Exception e)
+		{
+			LOGGER.error("Exception occur in the fetchAllApproverDetails " + e);
+			e.printStackTrace();
+		}
+		return osbmApproverList;
+	}
+
+	/**
+	 * Fetch all OSB mfee.
+	 *
+	 * @return the list
+	 */
+	@Override
+	public List<OsbmFeeModel> fetchAllOSBMfee() {
+		List<OsbmFeeModel> osbmFeeList = new ArrayList<>();
+		try {
+			osbmFeeList = osbmFeeRepository.findAll(); 
+		}
+		catch (Exception e) {
+			LOGGER.error("Exception occur in the fetchAllOSBMfee " + e);
+			e.printStackTrace();
+		}
+		return osbmFeeList;
+	}
+
+	/**
+	 * Fetch all OSUJ mfee.
+	 *
+	 * @return the list
+	 */
+	@Override
+	public List<OsujmFeeModel> fetchAllOSUJMfee() {
+		List<OsujmFeeModel> osujmFeeList = new ArrayList<>();
+		try {
+			osujmFeeList = osujmFeeRepository.findAll(); 
+		}
+		catch (Exception e) {
+			LOGGER.error("Exception occur in the fetchAllOSUJMfee " + e);
+			e.printStackTrace();
+		}
+		return osujmFeeList;
+	}
+
 }

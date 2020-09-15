@@ -325,6 +325,7 @@ public class NotificationUtil {
 		// message = message.replace("<1>",);
 		//message = message.replace("<2>", license.getTradeName());
 		message = message.replace("<2>", getMessageTemplate(license.getBusinessService(), localizationMessage));
+		message = message.replace("<3>", license.getApplicationNumber());
 		return message;
 	}
 
